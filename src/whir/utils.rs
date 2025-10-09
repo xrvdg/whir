@@ -74,6 +74,29 @@ where
     Ok((ood_points, ood_answers))
 }
 
+fn reverse_bits(val: usize, bits: u32) -> usize {
+    debug_assert!(val < 2_usize.pow(bits));
+    debug_assert!(bits > 0);
+    // shift will overflow if bits = 0
+    val.reverse_bits() >> (usize::BITS - bits)
+}
+
+// Reorder the input in reverse bit order, allows to convert from normal order
+// to reverse order or vice versa
+pub fn reverse_order<T>(values: &mut Vec<T>) {
+    match values.len() {
+        0 | 1 => (),
+        n => {
+            for index in 0..n {
+                let rev = reverse_bits(index, n.trailing_zeros());
+                if index < rev {
+                    values.swap(index, rev);
+                }
+            }
+        }
+    }
+}
+
 /// Generates a list of unique challenge queries within a folded domain.
 ///
 /// Given a `domain_size` and `folding_factor`, this function:
@@ -91,6 +114,10 @@ where
     T: UnitToBytes,
 {
     let folded_domain_size = domain_size >> folding_factor;
+    // println!(
+    //     "get_challenge_stir_queries: folded_domain_size = {}",
+    //     folded_domain_size
+    // );
     // Compute required bytes per index: `domain_size_bytes = ceil(log2(folded_domain_size) / 8)`
     let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
 
@@ -104,6 +131,7 @@ where
         .map(|chunk| {
             chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % folded_domain_size
         })
+        .map(|i| reverse_bits(i, folded_domain_size.trailing_zeros()))
         .collect_vec();
 
     match deduplication_strategy {

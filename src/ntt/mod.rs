@@ -20,6 +20,7 @@ pub use self::{
     transpose::transpose,
     wavelet::{inverse_wavelet_transform, wavelet_transform},
 };
+use crate::whir::utils::reverse_order;
 
 ///
 /// RS encode interleaved data `interleaved_coeffs` at the rate
@@ -60,6 +61,7 @@ pub fn interleaved_rs_encode<F: FftField>(
     transpose(&mut result, rows, columns);
     ntt_batch(&mut result, rows);
     transpose(&mut result, columns, rows);
+    reverse_order(&mut result);
     result
 }
 
@@ -265,7 +267,8 @@ mod tests {
         );
 
         // Compute things the new way
-        let interleaved_ntt = interleaved_rs_encode(&poly, expansion, folding_factor);
+        let mut interleaved_ntt = interleaved_rs_encode(&poly, expansion, folding_factor);
+        reverse_order(&mut interleaved_ntt);
         assert_eq!(expected, interleaved_ntt);
     }
 }
