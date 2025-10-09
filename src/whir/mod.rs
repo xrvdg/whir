@@ -179,34 +179,33 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn test_whir() {
-        let folding_factors = [1, 2, 3, 4];
-        let soundness_type = [
-            SoundnessType::ConjectureList,
-            SoundnessType::ProvableList,
-            SoundnessType::UniqueDecoding,
-        ];
-        let num_points = [0, 1, 2];
-        let pow_bits = [0, 5, 10];
+    use proptest::prelude::*;
 
-        for folding_factor in folding_factors {
-            let num_variables = folding_factor..=3 * folding_factor;
-            for num_variable in num_variables {
-                for num_points in num_points {
-                    for soundness_type in soundness_type {
-                        for pow_bits in pow_bits {
-                            make_whir_things(
-                                num_variable,
-                                FoldingFactor::Constant(folding_factor),
-                                num_points,
-                                soundness_type,
-                                pow_bits,
-                            );
-                        }
-                    }
-                }
-            }
+    fn soundness() -> impl Strategy<Value = SoundnessType> {
+        prop_oneof![
+            Just(SoundnessType::ConjectureList),
+            Just(SoundnessType::ProvableList),
+            Just(SoundnessType::UniqueDecoding)
+        ]
+    }
+
+    fn fold_and_num_variables(
+        strat: BoxedStrategy<usize>,
+    ) -> impl Strategy<Value = (usize, usize)> {
+        strat.prop_flat_map(|i| (Just(i), i..=3 * i))
+    }
+
+    proptest! {
+        #[test]
+        fn test_whir((folding_factor, num_variable) in fold_and_num_variables((1_usize..=4).boxed()), soundness_type in soundness(), num_points in 0_usize..=2, pow_bits in (0_usize..=2).prop_map(|i|i*5)) {
+            make_whir_things(
+                num_variable,
+                FoldingFactor::Constant(folding_factor),
+                num_points,
+                soundness_type,
+                pow_bits,
+            );
         }
+
     }
 }
