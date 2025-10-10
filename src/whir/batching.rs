@@ -205,38 +205,38 @@ mod batching_tests {
             .is_ok());
     }
 
-    #[test]
-    fn test_whir() {
-        let folding_factors = [1, 4];
-        let soundness_type = [
-            SoundnessType::ConjectureList,
-            SoundnessType::ProvableList,
-            SoundnessType::UniqueDecoding,
-        ];
-        let num_points = [0, 2];
-        let pow_bits = [0, 10];
+    use proptest::prelude::*;
 
-        for folding_factor in folding_factors {
-            let num_variables = (2 * folding_factor)..=3 * folding_factor;
-            for num_variable in num_variables {
-                for num_points in num_points {
-                    for soundness_type in soundness_type {
-                        for pow_bits in pow_bits {
-                            for batch_size in 1..=4 {
-                                make_batched_whir_things(
-                                    batch_size,
-                                    num_variable,
-                                    FoldingFactor::Constant(folding_factor),
-                                    num_points,
-                                    soundness_type,
-                                    pow_bits,
-                                    // FoldType::Naive,
-                                );
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    fn powers(base: usize, max_power: u32) -> impl Strategy<Value = usize> {
+        (0..=max_power).prop_map(move |n| base.pow(n))
+    }
+
+    fn soundness() -> impl Strategy<Value = SoundnessType> {
+        prop_oneof![
+            Just(SoundnessType::ConjectureList),
+            Just(SoundnessType::ProvableList),
+            Just(SoundnessType::UniqueDecoding)
+        ]
+    }
+
+    fn fold_and_num_variables() -> impl Strategy<Value = (usize, usize)> {
+        powers(4, 1).prop_flat_map(|i| (Just(i), (2 * i)..=3 * i))
+    }
+
+    proptest! {
+    #[test]
+    fn test_whir((folding_factor, num_variable) in fold_and_num_variables(), num_points in powers(2,1), pow_bits in powers(10,1), soundness_type in soundness(), batch_size in 1_usize..=4) {
+        make_batched_whir_things(
+            batch_size,
+            num_variable,
+            FoldingFactor::Constant(folding_factor),
+            num_points,
+            soundness_type,
+            pow_bits,
+            // FoldType::Naive,
+        );
+
+    }
+
     }
 }
