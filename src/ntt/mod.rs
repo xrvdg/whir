@@ -60,8 +60,10 @@ pub fn interleaved_rs_encode<F: FftField>(
     // TODO: Might be useful to keep the transposed data for future use.
     transpose(&mut result, rows, columns);
     ntt_batch(&mut result, rows);
+    for chunk in result.chunks_exact_mut(rows) {
+        reverse_order(chunk);
+    }
     transpose(&mut result, columns, rows);
-    reverse_order(&mut result);
     result
 }
 

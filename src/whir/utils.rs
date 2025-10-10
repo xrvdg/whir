@@ -83,7 +83,7 @@ fn reverse_bits(val: usize, bits: u32) -> usize {
 
 // Reorder the input in reverse bit order, allows to convert from normal order
 // to reverse order or vice versa
-pub fn reverse_order<T>(values: &mut Vec<T>) {
+pub fn reverse_order<T>(values: &mut [T]) {
     match values.len() {
         0 | 1 => (),
         n => {
