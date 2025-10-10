@@ -16,7 +16,7 @@ use crate::{
     poly_utils::coeffs::CoefficientList,
     whir::{
         parameters::WhirConfig,
-        utils::{compute_ood_response, sample_ood_points, DigestToUnitSerialize},
+        utils::{compute_ood_response, reverse_order, sample_ood_points, DigestToUnitSerialize},
     },
 };
 
@@ -75,9 +75,9 @@ where
         let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
 
         for (poly_idx, poly) in polynomials.iter().enumerate() {
-            let evals =
+            let mut evals =
                 interleaved_rs_encode(poly.coeffs(), expansion, self.0.folding_factor.at_round(0));
-
+            reverse_order(&mut evals, fold_size);
             for (i, chunk) in evals.chunks_exact(fold_size).enumerate() {
                 let start_dst = i * stacked_leaf_size + poly_idx * fold_size;
                 for (j, &eval) in chunk.iter().enumerate() {

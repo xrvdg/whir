@@ -83,15 +83,31 @@ fn reverse_bits(val: usize, bits: u32) -> usize {
 
 // Reorder the input in reverse bit order, allows to convert from normal order
 // to reverse order or vice versa
-pub fn reverse_order<T>(values: &mut [T]) {
-    match values.len() {
-        0 | 1 => (),
-        n => {
-            for index in 0..n {
-                let rev = reverse_bits(index, n.trailing_zeros());
-                if index < rev {
-                    values.swap(index, rev);
-                }
+pub fn reverse_order<T>(values: &mut [T], chunk_size: usize) {
+    if chunk_size == 0 {
+        panic!("chunk_size must be greater than 0");
+    }
+    
+    let n = values.len();
+    if n == 0 || chunk_size > n {
+        return;
+    }
+    
+    let num_chunks = n / chunk_size;
+    if num_chunks <= 1 {
+        return;
+    }
+    
+    let bits = num_chunks.trailing_zeros();
+    
+    for chunk_idx in 0..num_chunks {
+        let rev_chunk_idx = reverse_bits(chunk_idx, bits);
+        if chunk_idx < rev_chunk_idx {
+            // Swap entire chunks
+            for offset in 0..chunk_size {
+                let pos1 = chunk_idx * chunk_size + offset;
+                let pos2 = rev_chunk_idx * chunk_size + offset;
+                values.swap(pos1, pos2);
             }
         }
     }
@@ -131,7 +147,6 @@ where
         .map(|chunk| {
             chunk.iter().fold(0usize, |acc, &b| (acc << 8) | b as usize) % folded_domain_size
         })
-        .map(|i| reverse_bits(i, folded_domain_size.trailing_zeros()))
         .collect_vec();
 
     match deduplication_strategy {
