@@ -61,7 +61,7 @@ pub fn interleaved_rs_encode<F: FftField>(
     transpose(&mut result, rows, columns);
     ntt_batch(&mut result, rows);
     for chunk in result.chunks_exact_mut(rows) {
-        reverse_order(chunk);
+        reverse_order(chunk, 1);
     }
     transpose(&mut result, columns, rows);
     result
@@ -270,7 +270,7 @@ mod tests {
 
         // Compute things the new way
         let mut interleaved_ntt = interleaved_rs_encode(&poly, expansion, folding_factor);
-        reverse_order(&mut interleaved_ntt);
+        reverse_order(&mut interleaved_ntt, 1 << folding_factor);
         assert_eq!(expected, interleaved_ntt);
     }
 }

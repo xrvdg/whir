@@ -26,7 +26,7 @@ use crate::{
     whir::{
         merkle,
         parameters::RoundConfig,
-        utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
+        utils::{get_challenge_stir_queries, reverse_order, sample_ood_points, DigestToUnitSerialize},
     },
 };
 pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
@@ -228,9 +228,9 @@ where
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
-        let evals =
+        let mut evals =
             interleaved_rs_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
-
+        reverse_order(&mut evals, 1 << folding_factor);
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
         #[cfg(feature = "parallel")]
