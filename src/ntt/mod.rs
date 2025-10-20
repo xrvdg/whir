@@ -10,7 +10,11 @@ mod transpose;
 mod utils;
 mod wavelet;
 
-use ark_ff::FftField;
+use std::num::NonZero;
+
+use ark_bn254::Fr;
+use ark_ff::{FftField, PrimeField};
+use ntt_provekit::{Pow2, NTT};
 #[cfg(feature = "tracing")]
 use tracing::instrument;
 
@@ -30,7 +34,7 @@ pub use self::{
 /// outputs the interleaved alphabets in the same order as the input.
 ///
 #[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
-pub fn interleaved_rs_encode<F: FftField>(
+pub fn interleaved_rs_encode<F: FftField, RS: ReedSolomon<F>>(
     interleaved_coeffs: &[F],
     expansion: usize,
     fold_factor: usize,
@@ -48,19 +52,84 @@ pub fn interleaved_rs_encode<F: FftField>(
     let mut result = vec![F::zero(); expanded_size];
     result[..interleaved_coeffs.len()].copy_from_slice(interleaved_coeffs);
 
-    let rows = expanded_size / fold_factor_exp;
-    let columns = fold_factor_exp;
-
     //
     // 2. Convert from column-major (interleaved form) to row-major
     //    representation.
     //
 
-    // TODO: Might be useful to keep the transposed data for future use.
-    transpose(&mut result, rows, columns);
-    ntt_batch(&mut result, rows);
-    transpose(&mut result, columns, rows);
+    RS::interleaved_ntt(&mut result, fold_factor_exp);
+
     result
+}
+
+#[cfg_attr(feature = "tracing", instrument(skip(interleaved_coeffs), fields(size = interleaved_coeffs.len())))]
+pub fn basefield_interleaved_rs_encode<F: FftField, RS: ReedSolomon<F>>(
+    interleaved_coeffs: &[F::BasePrimeField],
+    expansion: usize,
+    fold_factor: usize,
+) -> Vec<F::BasePrimeField>
+where
+    F::BasePrimeField: PrimeField,
+{
+    let fold_factor = u32::try_from(fold_factor).unwrap();
+    debug_assert!(expansion > 0);
+    debug_assert!(interleaved_coeffs.len().is_power_of_two());
+
+    let fold_factor_exp = 2usize.pow(fold_factor);
+    let expanded_size = interleaved_coeffs.len() * expansion;
+
+    debug_assert_eq!(expanded_size % fold_factor_exp, 0);
+
+    // 1. Create zero-padded message of appropriate size
+    let mut result = vec![F::BasePrimeField::from(0_u64); expanded_size];
+    result[..interleaved_coeffs.len()].copy_from_slice(interleaved_coeffs);
+
+    //
+    // 2. Convert from column-major (interleaved form) to row-major
+    //    representation.
+    //
+    RS::basefield_interleaved_ntt(&mut result, fold_factor_exp);
+
+    result
+}
+
+impl ReedSolomon<Fr> for RSFr {
+    fn interleaved_ntt(values: &mut [Fr], nr_of_polys: usize) {
+        println!("FR implementation");
+        let mut ntt = NTT::new(values).unwrap();
+        let mut engine = ntt_provekit::NTTEngine::new();
+        engine.interleaved_ntt_nr(
+            &mut ntt,
+            NonZero::new(nr_of_polys).and_then(Pow2::new).unwrap(),
+        );
+    }
+
+    fn basefield_interleaved_ntt(interleaved_coeffs: &mut [Fr], nr_of_polys: usize) {
+        Self::interleaved_ntt(interleaved_coeffs, nr_of_polys);
+    }
+}
+
+pub trait ReedSolomon<F: FftField> {
+    fn interleaved_ntt(interleaved_coeffs: &mut [F], nr_of_polys: usize);
+    fn basefield_interleaved_ntt(interleaved_coeffs: &mut [F::BasePrimeField], nr_of_polys: usize);
+}
+
+pub struct RSDefault;
+/// Tag for specialization
+pub struct RSFr;
+
+impl<F: FftField> ReedSolomon<F> for RSDefault {
+    fn interleaved_ntt(values: &mut [F], nr_of_polys: usize) {
+        println!("base implementation");
+        let rows = values.len() / nr_of_polys;
+        transpose(values, rows, nr_of_polys);
+        ntt_batch(values, rows);
+        transpose(values, nr_of_polys, rows)
+    }
+
+    fn basefield_interleaved_ntt(interleaved_coeffs: &mut [F::BasePrimeField], nr_of_polys: usize) {
+        Self::interleaved_ntt(interleaved_coeffs, nr_of_polys);
+    }
 }
 
 #[cfg(test)]
@@ -243,7 +312,7 @@ mod tests {
     }
 
     #[test]
-    fn test_interleaved_rs_encode() {
+    fn test_interleaved_rs_encode_64() {
         use ark_poly::{EvaluationDomain, GeneralEvaluationDomain};
         use ark_std::UniformRand;
 
@@ -265,7 +334,8 @@ mod tests {
         );
 
         // Compute things the new way
-        let interleaved_ntt = interleaved_rs_encode(&poly, expansion, folding_factor);
+        let interleaved_ntt =
+            interleaved_rs_encode::<_, RSDefault>(&poly, expansion, folding_factor);
         assert_eq!(expected, interleaved_ntt);
     }
 }

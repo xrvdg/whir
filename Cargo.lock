@@ -71,6 +71,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "ark-bn254"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d69eab57e8d2663efa5c63135b2af4f396d66424f88954c21104125ab6b3e6bc"
+dependencies = [
+ "ark-ec",
+ "ark-ff",
+ "ark-std",
+]
+
+[[package]]
 name = "ark-crypto-primitives"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -824,6 +835,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntt"
+version = "0.1.0"
+source = "git+https://github.com/worldfnd/ProveKit/#cbcdd07115b870bf31cd1a29651ff9f8e9ffc79a"
+dependencies = [
+ "ark-bn254",
+ "ark-ff",
+ "rayon",
+]
+
+[[package]]
 name = "num-bigint"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1383,6 +1404,7 @@ dependencies = [
 name = "whir"
 version = "0.1.0"
 dependencies = [
+ "ark-bn254",
  "ark-crypto-primitives",
  "ark-ff",
  "ark-poly",
@@ -1393,6 +1415,7 @@ dependencies = [
  "codspeed-divan-compat",
  "hex",
  "itertools 0.14.0",
+ "ntt",
  "postcard",
  "proptest",
  "rand",

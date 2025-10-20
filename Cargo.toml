@@ -53,6 +53,8 @@ thiserror = "2.0"
 itertools = "0.14"
 tracing = { version = "0.1.41", optional = true }
 hex = "0.4.3"
+ntt-provekit = { git = "https://github.com/worldfnd/ProveKit/" , package = "ntt"}
+ark-bn254 = "0.5.0"
 
 [dev-dependencies]
 proptest = "1.0"

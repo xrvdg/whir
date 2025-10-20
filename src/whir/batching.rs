@@ -31,12 +31,13 @@ mod batching_tests {
 
     use crate::{
         crypto::{
-            fields::Field64,
+            fields::Field256,
             merkle_tree::{
                 blake3::{Blake3Compress, Blake3LeafHash, Blake3MerkleTreeParams},
                 parameters::default_config,
             },
         },
+        ntt::RSFr,
         parameters::{
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
             ProtocolParameters, SoundnessType,
@@ -59,7 +60,8 @@ mod batching_tests {
     /// PoW strategy used for grinding challenges in Fiat-Shamir transcript.
     type PowStrategy = Blake3PoW;
     /// Field type used in the tests.
-    type F = Field64;
+    type F = Field256;
+    type RS = RSFr;
 
     fn random_poly(num_coefficients: usize) -> CoefficientList<F> {
         let mut store = Vec::<F>::with_capacity(num_coefficients);
@@ -148,7 +150,7 @@ mod batching_tests {
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
         let batched_witness = committer
-            .commit_batch(&mut prover_state, &poly_list.iter().collect::<Vec<_>>())
+            .commit_batch::<_, RS>(&mut prover_state, &poly_list.iter().collect::<Vec<_>>())
             .unwrap();
 
         // Get the batched polynomial
@@ -183,7 +185,7 @@ mod batching_tests {
 
         // Generate a STARK proof for the given statement and witness
         prover
-            .prove(&mut prover_state, statement.clone(), batched_witness)
+            .prove::<_, RS>(&mut prover_state, statement.clone(), batched_witness)
             .unwrap();
 
         // Create a verifier with matching parameters
