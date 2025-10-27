@@ -2,6 +2,8 @@ use std::ops::Index;
 
 use ark_ff::Field;
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
+#[cfg(feature = "parallel")]
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::{lagrange_iterator::LagrangePolynomialIterator, multilinear::MultilinearPoint};
@@ -107,6 +109,74 @@ where
     /// Returns the number of variables in the multilinear polynomial.
     pub const fn num_variables(&self) -> usize {
         self.num_variables
+    }
+
+    /// Truncates the evaluations list to the specified length and updates the number of variables.
+    pub fn truncate(&mut self, new_len: usize) {
+        assert!(
+            new_len.is_power_of_two(),
+            "New length must be a power of two."
+        );
+        assert!(
+            new_len <= self.evals.len(),
+            "New length cannot exceed current length."
+        );
+        self.evals.truncate(new_len);
+        self.evals.shrink_to_fit();
+        self.num_variables = new_len.ilog2() as usize;
+    }
+
+    /// Folds the polynomial by fixing the first `k` variables to the given randomness.
+    ///
+    /// Given a multilinear polynomial `f(X_0, ..., X_{n-1})` and folding randomness `r = (r_0, ..., r_{k-1})`,
+    /// this computes a new polynomial `g(X_k, ..., X_{n-1})` defined as:
+    ///
+    /// ```ignore
+    /// g(X_k, ..., X_{n-1}) = sum over b in {0,1}^k of eq(b, r) * f(b, X_k, ..., X_{n-1})
+    /// ```
+    ///
+    /// where `eq(b, r)` is the equality checking polynomial.
+    ///
+    /// - The number of variables decreases: `m = n - k`
+    /// - Uses direct evaluation on the hypercube evaluations
+    #[must_use]
+    #[cfg_attr(feature = "tracing", tracing::instrument(skip_all, fields(size = self.evals.len())))]
+    pub fn fold(&self, folding_randomness: &MultilinearPoint<F>) -> Self {
+        let folding_factor = folding_randomness.num_variables();
+        let chunk_size = 1 << folding_factor;
+
+        // Pre-compute eq evaluations for all points in {0,1}^k
+        let mut eq_evals = vec![F::ZERO; chunk_size];
+        crate::utils::eval_eq(&folding_randomness.0, &mut eq_evals, F::ONE);
+
+        #[cfg(not(feature = "parallel"))]
+        let folded_evals = self
+            .evals
+            .chunks_exact(chunk_size)
+            .map(|chunk| {
+                // Compute weighted sum: sum of eq(b, r) * f(b, ...)
+                chunk
+                    .iter()
+                    .zip(eq_evals.iter())
+                    .map(|(eval, &eq_val)| *eval * eq_val)
+                    .sum()
+            })
+            .collect();
+
+        #[cfg(feature = "parallel")]
+        let folded_evals = self
+            .evals
+            .par_chunks_exact(chunk_size)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .zip(eq_evals.iter())
+                    .map(|(eval, &eq_val)| *eval * eq_val)
+                    .sum()
+            })
+            .collect();
+
+        Self::new(folded_evals)
     }
 
     pub fn to_coeffs(&self) -> crate::poly_utils::coeffs::CoefficientList<F> {

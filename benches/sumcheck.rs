@@ -39,7 +39,7 @@ fn sumcheck_first_round(bencher: Bencher, size: u64) {
         })
         .bench_values(
             |(coeffs, statement, combination_randomness, folding_randomness)| {
-                let mut prover = SumcheckSingle::new(coeffs, &statement, F::ONE);
+                let mut prover = SumcheckSingle::new(coeffs.into(), &statement, F::ONE);
                 let sumcheck_poly = prover.compute_sumcheck_polynomial();
 
                 prover.compress(combination_randomness, &folding_randomness, &sumcheck_poly);

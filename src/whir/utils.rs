@@ -11,6 +11,16 @@ use tracing::instrument;
 
 use crate::{parameters::DeduplicationStrategy, poly_utils::multilinear::MultilinearPoint};
 
+pub fn reverse_bits(val: usize, bits: u32) -> usize {
+    if bits <= 1 {
+        return val;
+    }
+    debug_assert!(val < 2_usize.pow(bits));
+    debug_assert!(bits > 0);
+    // shift will overflow if bits = 0
+    val.reverse_bits() >> (usize::BITS - bits)
+}
+
 ///
 /// A utility function to compute the response to OOD challenge and add it to
 /// the transcript. The OOD challenge should have already been sampled and added
