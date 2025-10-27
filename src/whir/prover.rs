@@ -1,6 +1,7 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree, MultiPath};
+use ark_crypto_primitives::merkle_tree::{Config, LeafOrderingMode, MerkleTree, MultiPath};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
+use ark_std::log2;
 #[cfg(feature = "parallel")]
 use rayon::prelude::*;
 use spongefish::{
@@ -20,13 +21,15 @@ use super::{
 use crate::{
     domain::Domain,
     ntt::ReedSolomon,
-    poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
+    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint},
     sumcheck::SumcheckSingle,
     utils::expand_randomness,
     whir::{
         merkle,
         parameters::RoundConfig,
-        utils::{get_challenge_stir_queries, sample_ood_points, DigestToUnitSerialize},
+        utils::{
+            get_challenge_stir_queries, reverse_bits, sample_ood_points, DigestToUnitSerialize,
+        },
     },
 };
 pub type RootPath<F, MC> = (MultiPath<MC>, Vec<Vec<F>>);
@@ -161,7 +164,7 @@ where
             round: 0,
             sumcheck_prover,
             folding_randomness,
-            coefficients: witness.polynomial,
+            evaluations: witness.polynomial,
             prev_merkle: witness.merkle_tree,
             prev_merkle_answers: witness.merkle_leaves,
             randomness_vec,
@@ -191,7 +194,7 @@ where
     }
 
     #[allow(clippy::too_many_lines)]
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = round_state.coefficients.num_coeffs())))]
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = round_state.evaluations.num_evals())))]
     fn round<ProverState, RS>(
         &self,
         prover_state: &mut ProverState,
@@ -206,19 +209,18 @@ where
             + HintSerialize,
         RS: ReedSolomon<F>,
     {
-        // Fold the coefficients
-        let folded_coefficients = round_state
-            .coefficients
+        let folded_evaluations = round_state
+            .evaluations
             .fold(&round_state.folding_randomness);
 
         let num_variables = self.config.mv_parameters.num_variables
             - self.config.folding_factor.total_number(round_state.round);
         // num_variables should match the folded_coefficients here.
-        assert_eq!(num_variables, folded_coefficients.num_variables());
+        assert_eq!(num_variables, folded_evaluations.num_variables());
 
         // Base case
         if round_state.round == self.config.n_rounds() {
-            return self.final_round(prover_state, round_state, &folded_coefficients);
+            return self.final_round::<_, RS>(prover_state, round_state, &folded_evaluations);
         }
 
         let round_params = &self.config.round_parameters[round_state.round];
@@ -229,10 +231,16 @@ where
 
         // Fold the coefficients, and compute fft of polynomial (and commit)
         let new_domain = round_state.domain.scale(2);
+        let folded_coefficients = folded_evaluations.to_coeffs();
         let expansion = new_domain.size() / folded_coefficients.num_coeffs();
         let evals =
             RS::interleaved_encode(folded_coefficients.coeffs(), expansion, folding_factor_next);
 
+        let leaf_ordering_mode = if RS::is_bit_reversed() {
+            LeafOrderingMode::BIT_REVERSED
+        } else {
+            LeafOrderingMode::NATURAL
+        };
         #[cfg(not(feature = "parallel"))]
         let leafs_iter = evals.chunks_exact(1 << folding_factor_next);
         #[cfg(feature = "parallel")]
@@ -244,6 +252,7 @@ where
                 &self.config.leaf_hash_params,
                 &self.config.two_to_one_params,
                 leafs_iter,
+                leaf_ordering_mode,
             )
             .unwrap()
         };
@@ -256,7 +265,7 @@ where
             prover_state,
             round_params.ood_samples,
             num_variables,
-            |point| folded_coefficients.evaluate(point),
+            |point| folded_evaluations.evaluate(point),
         )?;
 
         // PoW
@@ -279,6 +288,9 @@ where
             round_params,
             ood_points,
         )?;
+        let size: u32 = log2(round_state.domain.size() >> folding_factor)
+            .try_into()
+            .unwrap();
 
         let fold_size = 1 << folding_factor;
         let leaf_size = if round_state.round == 0 && self.config.batch_size > 1 {
@@ -288,7 +300,14 @@ where
         };
         let mut answers: Vec<_> = stir_challenges_indexes
             .iter()
-            .map(|i| round_state.prev_merkle_answers[i * leaf_size..(i + 1) * leaf_size].to_vec())
+            .map(|i| {
+                let o = if RS::is_bit_reversed() {
+                    reverse_bits(*i, size)
+                } else {
+                    *i
+                };
+                round_state.prev_merkle_answers[o * leaf_size..(o + 1) * leaf_size].to_vec()
+            })
             .collect();
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
@@ -330,14 +349,14 @@ where
                 sumcheck_prover
             })
             .unwrap_or_else(|| {
-                let mut statement = Statement::new(folded_coefficients.num_variables());
+                let mut statement = Statement::new(folded_evaluations.num_variables());
 
                 for (point, eval) in stir_challenges.into_iter().zip(stir_evaluations) {
                     let weights = Weights::evaluation(point);
                     statement.add_constraint(weights, eval);
                 }
                 SumcheckSingle::new(
-                    folded_coefficients.clone(),
+                    folded_evaluations.clone(),
                     &statement,
                     combination_randomness[1],
                 )
@@ -365,25 +384,27 @@ where
         round_state.domain = new_domain;
         round_state.sumcheck_prover = Some(sumcheck_prover);
         round_state.folding_randomness = folding_randomness;
-        round_state.coefficients = folded_coefficients;
+        round_state.evaluations = folded_evaluations;
         round_state.prev_merkle = merkle_tree;
         round_state.prev_merkle_answers = evals;
 
         Ok(())
     }
 
-    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = folded_coefficients.num_coeffs())))]
-    fn final_round<ProverState>(
+    #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = folded_evaluations.num_evals())))]
+    fn final_round<ProverState, RS>(
         &self,
         prover_state: &mut ProverState,
         round_state: &mut RoundState<F, MerkleConfig>,
-        folded_coefficients: &CoefficientList<F>,
+        folded_evaluations: &EvaluationsList<F>,
     ) -> ProofResult<()>
     where
         ProverState:
             UnitToField<F> + UnitToBytes + FieldToUnitSerialize<F> + PoWChallenge + HintSerialize,
+        RS: ReedSolomon<F>,
     {
         // Directly send coefficients of the polynomial to the verifier.
+        let folded_coefficients = folded_evaluations.to_coeffs();
         prover_state.add_scalars(folded_coefficients.coeffs())?;
 
         // Precompute the folding factors for later use
@@ -412,12 +433,21 @@ where
             prover_state,
             &self.config.deduplication_strategy,
         )?;
-
+        let size: u32 = log2(round_state.domain.size() >> folding_factor)
+            .try_into()
+            .unwrap();
         // Every query requires opening these many in the previous Merkle tree
         let fold_size = 1 << folding_factor;
         let answers = final_challenge_indexes
             .iter()
-            .map(|i| round_state.prev_merkle_answers[i * fold_size..(i + 1) * fold_size].to_vec())
+            .map(|i| {
+                let o = if RS::is_bit_reversed() {
+                    reverse_bits(*i, size)
+                } else {
+                    *i
+                };
+                round_state.prev_merkle_answers[o * fold_size..(o + 1) * fold_size].to_vec()
+            })
             .collect::<Vec<_>>();
 
         prover_state.hint::<Vec<Vec<F>>>(&answers)?;
@@ -433,7 +463,7 @@ where
                 .sumcheck_prover
                 .clone()
                 .unwrap_or_else(|| {
-                    SumcheckSingle::new(folded_coefficients.clone(), &round_state.statement, F::ONE)
+                    SumcheckSingle::new(folded_evaluations.clone(), &round_state.statement, F::ONE)
                 })
                 .compute_sumcheck_polynomials::<PowStrategy, _>(
                     prover_state,
@@ -524,10 +554,10 @@ where
     /// Used to reduce the number of variables in the polynomial.
     pub(crate) folding_randomness: MultilinearPoint<F>,
 
-    /// Current polynomial in coefficient form.
+    /// Current polynomial in evaluation form.
     ///
     /// Folded and evaluated to produce new commitments and Merkle trees.
-    pub(crate) coefficients: CoefficientList<F>,
+    pub(crate) evaluations: EvaluationsList<F>,
 
     /// Merkle tree commitment to the polynomial evaluations from the previous round.
     ///

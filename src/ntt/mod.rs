@@ -71,6 +71,7 @@ pub trait ReedSolomon<F: FftField> {
         expansion: usize,
         fold_factor: usize,
     ) -> Vec<F::BasePrimeField>;
+    fn is_bit_reversed() -> bool;
 }
 
 /// Tag to select the built-in Reed Solomon Encoding
@@ -90,6 +91,9 @@ impl<F: FftField> ReedSolomon<F> for RSDefault {
         fold_factor: usize,
     ) -> Vec<F::BasePrimeField> {
         interleaved_rs_encode(interleaved_coeffs, expansion, fold_factor)
+    }
+    fn is_bit_reversed() -> bool {
+        false
     }
 }
 

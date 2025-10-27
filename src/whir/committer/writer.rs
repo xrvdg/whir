@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
+use ark_crypto_primitives::merkle_tree::{Config, LeafOrderingMode, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
@@ -13,7 +13,7 @@ use tracing::{instrument, span, Level};
 use super::Witness;
 use crate::{
     ntt::ReedSolomon,
-    poly_utils::coeffs::CoefficientList,
+    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList},
     whir::{
         parameters::WhirConfig,
         utils::{compute_ood_response, sample_ood_points, DigestToUnitSerialize},
@@ -95,6 +95,11 @@ where
         #[cfg(feature = "parallel")]
         let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
 
+        let leaf_ordering_mode = if RS::is_bit_reversed() {
+            LeafOrderingMode::BIT_REVERSED
+        } else {
+            LeafOrderingMode::NATURAL
+        };
         let merkle_tree = {
             #[cfg(feature = "tracing")]
             let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
@@ -102,6 +107,7 @@ where
                 &self.0.leaf_hash_params,
                 &self.0.two_to_one_params,
                 leafs_iter,
+                leaf_ordering_mode,
             )
             .unwrap()
         };
@@ -135,7 +141,7 @@ where
 
         if polynomials.len() == 1 {
             return Ok(Witness {
-                polynomial: polynomials[0].clone().to_extension(),
+                polynomial: polynomials[0].clone().to_extension().into(),
                 merkle_tree,
                 merkle_leaves: stacked_leaves,
                 ood_points,
@@ -168,7 +174,7 @@ where
         }
 
         Ok(Witness {
-            polynomial,
+            polynomial: polynomial.into(),
             merkle_tree,
             merkle_leaves: stacked_leaves,
             ood_points,
@@ -200,7 +206,7 @@ where
     MerkleConfig: Config<Leaf = [F]>,
 {
     /// Returns the batched polynomial
-    pub const fn batched_poly(&self) -> &CoefficientList<F> {
+    pub const fn batched_poly(&self) -> &EvaluationsList<F> {
         &self.polynomial
     }
 }
@@ -315,7 +321,7 @@ mod tests {
 
         // Ensure polynomial data is correctly stored
         assert_eq!(
-            witness.polynomial.coeffs().len(),
+            witness.polynomial.evals().len(),
             polynomial.coeffs().len(),
             "Stored polynomial should have the correct number of coefficients"
         );

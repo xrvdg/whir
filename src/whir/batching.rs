@@ -42,9 +42,7 @@ mod batching_tests {
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
             ProtocolParameters, SoundnessType,
         },
-        poly_utils::{
-            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
-        },
+        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         whir::{
             committer::{reader::CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
@@ -170,7 +168,7 @@ mod batching_tests {
         let linear_claim_weight = Weights::linear(weight_poly.into());
 
         // Convert polynomial to extension field representation
-        let poly = EvaluationsList::from(batched_poly.clone().to_extension());
+        let poly = batched_poly.clone();
 
         // Compute the weighted sum of the polynomial (for sumcheck)
         let sum = linear_claim_weight.weighted_sum(&poly);

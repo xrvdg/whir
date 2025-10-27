@@ -1,7 +1,6 @@
 use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
 
-use crate::poly_utils::coeffs::CoefficientList;
-
+use crate::poly_utils::evals::EvaluationsList;
 pub mod reader;
 pub mod writer;
 
@@ -18,10 +17,10 @@ pub struct Witness<F, MerkleConfig>
 where
     MerkleConfig: Config,
 {
-    /// The committed polynomial in coefficient form. In case of batching, its
+    /// The committed polynomial in evaluation form. In case of batching, its
     /// the batched polynomial, i.e., the weighted sum of polynomials in
     /// batching data.
-    pub(crate) polynomial: CoefficientList<F>,
+    pub(crate) polynomial: EvaluationsList<F>,
 
     /// The Merkle tree constructed from the polynomial evaluations. In case of
     /// batching, it's the merkle tree of the batched polynomial.
