@@ -74,6 +74,45 @@ where
     Ok((ood_points, ood_answers))
 }
 
+fn reverse_bits(val: usize, bits: u32) -> usize {
+    debug_assert!(val < 2_usize.pow(bits));
+    debug_assert!(bits > 0);
+    // shift will overflow if bits = 0
+    val.reverse_bits() >> (usize::BITS - bits)
+}
+
+// Reorder the input in reverse bit order, allows to convert from normal order
+// to reverse order or vice versa
+pub fn reverse_order<T>(values: &mut [T], chunk_size: usize) {
+    if chunk_size == 0 {
+        panic!("chunk_size must be greater than 0");
+    }
+    
+    let n = values.len();
+    if n == 0 || chunk_size > n {
+        return;
+    }
+    
+    let num_chunks = n / chunk_size;
+    if num_chunks <= 1 {
+        return;
+    }
+    
+    let bits = num_chunks.trailing_zeros();
+    
+    for chunk_idx in 0..num_chunks {
+        let rev_chunk_idx = reverse_bits(chunk_idx, bits);
+        if chunk_idx < rev_chunk_idx {
+            // Swap entire chunks
+            for offset in 0..chunk_size {
+                let pos1 = chunk_idx * chunk_size + offset;
+                let pos2 = rev_chunk_idx * chunk_size + offset;
+                values.swap(pos1, pos2);
+            }
+        }
+    }
+}
+
 /// Generates a list of unique challenge queries within a folded domain.
 ///
 /// Given a `domain_size` and `folding_factor`, this function:
@@ -91,6 +130,10 @@ where
     T: UnitToBytes,
 {
     let folded_domain_size = domain_size >> folding_factor;
+    // println!(
+    //     "get_challenge_stir_queries: folded_domain_size = {}",
+    //     folded_domain_size
+    // );
     // Compute required bytes per index: `domain_size_bytes = ceil(log2(folded_domain_size) / 8)`
     let domain_size_bytes = ((folded_domain_size * 2 - 1).ilog2() as usize).div_ceil(8);
 
