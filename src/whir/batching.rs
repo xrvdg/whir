@@ -37,13 +37,12 @@ mod batching_tests {
                 parameters::default_config,
             },
         },
+        ntt::RSDefault,
         parameters::{
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
             ProtocolParameters, SoundnessType,
         },
-        poly_utils::{
-            coeffs::CoefficientList, evals::EvaluationsList, multilinear::MultilinearPoint,
-        },
+        poly_utils::{coeffs::CoefficientList, multilinear::MultilinearPoint},
         whir::{
             committer::{reader::CommitmentReader, CommitmentWriter},
             domainsep::WhirDomainSeparator,
@@ -60,6 +59,7 @@ mod batching_tests {
     type PowStrategy = Blake3PoW;
     /// Field type used in the tests.
     type F = Field64;
+    type RS = RSDefault;
 
     fn random_poly(num_coefficients: usize) -> CoefficientList<F> {
         let mut store = Vec::<F>::with_capacity(num_coefficients);
@@ -148,7 +148,7 @@ mod batching_tests {
         // Create a commitment to the polynomial and generate auxiliary witness data
         let committer = CommitmentWriter::new(params.clone());
         let batched_witness = committer
-            .commit_batch(&mut prover_state, &poly_list.iter().collect::<Vec<_>>())
+            .commit_batch::<_, RS>(&mut prover_state, &poly_list.iter().collect::<Vec<_>>())
             .unwrap();
 
         // Get the batched polynomial
@@ -168,7 +168,7 @@ mod batching_tests {
         let linear_claim_weight = Weights::linear(weight_poly.into());
 
         // Convert polynomial to extension field representation
-        let poly = EvaluationsList::from(batched_poly.clone().to_extension());
+        let poly = batched_poly.clone();
 
         // Compute the weighted sum of the polynomial (for sumcheck)
         let sum = linear_claim_weight.weighted_sum(&poly);
@@ -183,7 +183,7 @@ mod batching_tests {
 
         // Generate a STARK proof for the given statement and witness
         prover
-            .prove(&mut prover_state, statement.clone(), batched_witness)
+            .prove::<_, RS>(&mut prover_state, statement.clone(), batched_witness)
             .unwrap();
 
         // Create a verifier with matching parameters

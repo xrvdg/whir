@@ -1,4 +1,4 @@
-use ark_crypto_primitives::merkle_tree::{Config, MerkleTree};
+use ark_crypto_primitives::merkle_tree::{Config, LeafOrderingMode, MerkleTree};
 use ark_ff::FftField;
 use ark_poly::EvaluationDomain;
 #[cfg(feature = "parallel")]
@@ -12,8 +12,8 @@ use tracing::{instrument, span, Level};
 
 use super::Witness;
 use crate::{
-    ntt::interleaved_rs_encode,
-    poly_utils::coeffs::CoefficientList,
+    ntt::ReedSolomon,
+    poly_utils::{coeffs::CoefficientList, evals::EvaluationsList},
     whir::{
         parameters::WhirConfig,
         utils::{compute_ood_response, sample_ood_points, DigestToUnitSerialize},
@@ -44,7 +44,7 @@ where
 
     #[allow(clippy::too_many_lines)]
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomials.first().unwrap().num_coeffs())))]
-    pub fn commit_batch<ProverState>(
+    pub fn commit_batch<ProverState, RS>(
         &self,
         prover_state: &mut ProverState,
         polynomials: &[&CoefficientList<F::BasePrimeField>],
@@ -54,6 +54,7 @@ where
             + BytesToUnitSerialize
             + DigestToUnitSerialize<MerkleConfig>
             + UnitToField<F>,
+        RS: ReedSolomon<F>,
     {
         assert!(!polynomials.is_empty());
         assert_eq!(polynomials.len(), self.0.batch_size);
@@ -75,8 +76,11 @@ where
         let mut stacked_leaves = vec![F::zero(); num_leaves * stacked_leaf_size];
 
         for (poly_idx, poly) in polynomials.iter().enumerate() {
-            let evals =
-                interleaved_rs_encode(poly.coeffs(), expansion, self.0.folding_factor.at_round(0));
+            let evals = RS::interleaved_basefield_encode(
+                poly.coeffs(),
+                expansion,
+                self.0.folding_factor.at_round(0),
+            );
 
             for (i, chunk) in evals.chunks_exact(fold_size).enumerate() {
                 let start_dst = i * stacked_leaf_size + poly_idx * fold_size;
@@ -91,6 +95,11 @@ where
         #[cfg(feature = "parallel")]
         let leafs_iter = stacked_leaves.par_chunks_exact(stacked_leaf_size);
 
+        let leaf_ordering_mode = if RS::is_bit_reversed() {
+            LeafOrderingMode::BIT_REVERSED
+        } else {
+            LeafOrderingMode::NATURAL
+        };
         let merkle_tree = {
             #[cfg(feature = "tracing")]
             let _span = span!(Level::INFO, "MerkleTree::new", size = leafs_iter.len()).entered();
@@ -98,6 +107,7 @@ where
                 &self.0.leaf_hash_params,
                 &self.0.two_to_one_params,
                 leafs_iter,
+                leaf_ordering_mode,
             )
             .unwrap()
         };
@@ -131,7 +141,7 @@ where
 
         if polynomials.len() == 1 {
             return Ok(Witness {
-                polynomial: polynomials[0].clone().to_extension(),
+                polynomial: polynomials[0].clone().to_extension().into(),
                 merkle_tree,
                 merkle_leaves: stacked_leaves,
                 ood_points,
@@ -164,7 +174,7 @@ where
         }
 
         Ok(Witness {
-            polynomial,
+            polynomial: polynomial.into(),
             merkle_tree,
             merkle_leaves: stacked_leaves,
             ood_points,
@@ -174,7 +184,7 @@ where
     }
 
     #[cfg_attr(feature = "tracing", instrument(skip_all, fields(size = polynomial.num_coeffs())))]
-    pub fn commit<ProverState>(
+    pub fn commit<ProverState, RS>(
         &self,
         prover_state: &mut ProverState,
         polynomial: &CoefficientList<F::BasePrimeField>,
@@ -184,8 +194,9 @@ where
             + UnitToField<F>
             + DigestToUnitSerialize<MerkleConfig>
             + BytesToUnitSerialize,
+        RS: ReedSolomon<F>,
     {
-        self.commit_batch(prover_state, &[polynomial])
+        self.commit_batch::<_, RS>(prover_state, &[polynomial])
     }
 }
 
@@ -195,7 +206,7 @@ where
     MerkleConfig: Config<Leaf = [F]>,
 {
     /// Returns the batched polynomial
-    pub const fn batched_poly(&self) -> &CoefficientList<F> {
+    pub const fn batched_poly(&self) -> &EvaluationsList<F> {
         &self.polynomial
     }
 }
@@ -215,6 +226,7 @@ mod tests {
                 parameters::default_config,
             },
         },
+        ntt::RSDefault,
         parameters::{
             DeduplicationStrategy, FoldingFactor, MerkleProofStrategy, MultivariateParameters,
             ProtocolParameters, SoundnessType,
@@ -276,7 +288,9 @@ mod tests {
 
         // Run the Commitment Phase
         let committer = CommitmentWriter::new(params.clone());
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+        let witness = committer
+            .commit::<_, RSDefault>(&mut prover_state, &polynomial)
+            .unwrap();
 
         // Ensure Merkle leaves are correctly generated.
         assert!(
@@ -307,7 +321,7 @@ mod tests {
 
         // Ensure polynomial data is correctly stored
         assert_eq!(
-            witness.polynomial.coeffs().len(),
+            witness.polynomial.evals().len(),
             polynomial.coeffs().len(),
             "Stored polynomial should have the correct number of coefficients"
         );
@@ -356,7 +370,9 @@ mod tests {
         let mut prover_state = domainsep.to_prover_state();
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+        let witness = committer
+            .commit::<_, RSDefault>(&mut prover_state, &polynomial)
+            .unwrap();
 
         // Expansion factor is 2
         assert_eq!(
@@ -400,7 +416,9 @@ mod tests {
         let mut prover_state = domainsep.to_prover_state();
 
         let committer = CommitmentWriter::new(params);
-        let witness = committer.commit(&mut prover_state, &polynomial).unwrap();
+        let witness = committer
+            .commit::<_, RSDefault>(&mut prover_state, &polynomial)
+            .unwrap();
 
         assert!(
             witness.ood_points.is_empty(),
